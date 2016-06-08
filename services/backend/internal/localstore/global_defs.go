@@ -30,17 +30,21 @@ var languages = map[string]uint16{
 }
 
 func init() {
-	GraphSchema.Map.AddTableWithName(dbGlobalDef{}, "global_defs").SetKeys(false, "Repo", "CommitID", "UnitType", "Unit", "Path")
-	GraphSchema.CreateSQL = append(GraphSchema.CreateSQL,
-		`ALTER TABLE global_defs ALTER COLUMN updated_at TYPE timestamp with time zone USING updated_at::timestamp with time zone;`,
-		`ALTER TABLE global_defs ALTER COLUMN ref_ct SET DEFAULT 0;`,
-		`ALTER TABLE global_defs ALTER COLUMN language TYPE smallint`,
-		`CREATE INDEX bow_idx ON global_defs USING gin(to_tsvector('english', bow));`,
-		`CREATE INDEX doc_idx ON global_defs USING gin(to_tsvector('english', doc));`,
-		`CREATE INDEX global_defs_name ON global_defs USING btree (lower(name));`,
-		`CREATE INDEX global_defs_repo ON global_defs USING btree (repo text_pattern_ops);`,
-		`CREATE INDEX global_defs_updater ON global_defs USING btree (repo, unit_type, unit, path);`,
-	)
+	fields := []string{"Repo", "CommitID", "UnitType", "Unit", "Path"}
+	GraphSchema.Map.AddTableWithName(dbGlobalDef{}, "global_defs").SetKeys(false, fields...)
+	GraphSchema.Map.AddTableWithName(dbLocalDef{}, "local_defs").SetKeys(false, fields...)
+	for _, table := range []string{"global_defs", "local_defs"} {
+		GraphSchema.CreateSQL = append(GraphSchema.CreateSQL,
+			`ALTER TABLE `+table+` ALTER COLUMN updated_at TYPE timestamp with time zone USING updated_at::timestamp with time zone;`,
+			`ALTER TABLE `+table+` ALTER COLUMN ref_ct SET DEFAULT 0;`,
+			`ALTER TABLE `+table+` ALTER COLUMN language TYPE smallint`,
+			`CREATE INDEX `+table+`_bow_idx ON `+table+` USING gin(to_tsvector('english', bow));`,
+			`CREATE INDEX `+table+`_doc_idx ON `+table+` USING gin(to_tsvector('english', doc));`,
+			`CREATE INDEX `+table+`_name ON `+table+` USING btree (lower(name));`,
+			`CREATE INDEX `+table+`_repo ON `+table+` USING btree (repo text_pattern_ops);`,
+			`CREATE INDEX `+table+`_updater ON `+table+` USING btree (repo, unit_type, unit, path);`,
+		)
+	}
 }
 
 type dbGlobalDefLanguages struct {
@@ -69,6 +73,8 @@ type dbGlobalDef struct {
 	BoW string `db:"bow"`
 	Doc string `db:"doc"`
 }
+
+type dbLocalDef dbGlobalDef
 
 func fromDBDef(d *dbGlobalDef) *sourcegraph.Def {
 	if d == nil {
@@ -161,7 +167,11 @@ func (g *globalDefs) Search(ctx context.Context, op *store.GlobalDefSearchOp) (*
 	} else {
 		scoreSQL = `ref_ct score`
 	}
-	selectSQL := `SELECT repo, commit_id, unit_type, unit, path, name, kind, file, data, doc, ref_ct, ` + scoreSQL + ` FROM global_defs`
+	optimalTable := "global_defs"
+	if len(op.Opt.Repos) > 0 {
+		optimalTable = "local_defs"
+	}
+	selectSQL := `SELECT repo, commit_id, unit_type, unit, path, name, kind, file, data, doc, ref_ct, ` + scoreSQL + ` FROM ` + optimalTable
 	var whereSQL, prefixSQL string
 	{
 		var wheres []string
@@ -356,39 +366,55 @@ func (g *globalDefs) Update(ctx context.Context, op store.GlobalDefUpdateOp) err
 				return gorp.PostgresDialect{}.BindVar(len(args) - 1)
 			}
 
-			upsertSQL := `
-WITH upsert AS (
-UPDATE global_defs SET name=` + arg(d.Name) +
-				`, kind=` + arg(d.Kind) +
-				`, file=` + arg(d.File) +
-				`, language=` + arg(languageID) +
-				`, commit_id=` + arg(d.CommitID) +
-				`, updated_at=now()` +
-				`, data=` + arg(data) +
-				`, bow=` + arg(bow) +
-				`, doc=` + arg(docstring) +
-				` WHERE repo=` + arg(d.Repo) +
-				` AND unit_type=` + arg(d.UnitType) +
-				` AND unit=` + arg(d.Unit) +
-				` AND path=` + arg(d.Path) +
-				` RETURNING *
-)
-INSERT INTO global_defs (repo, commit_id, unit_type, unit, path, name, kind, file, language, updated_at, data, bow, doc) SELECT ` +
-				arg(d.Repo) + `, ` +
-				arg(d.CommitID) + `, ` +
-				arg(d.UnitType) + `, ` +
-				arg(d.Unit) + `, ` +
-				arg(d.Path) + `, ` +
-				arg(d.Name) + `, ` +
-				arg(d.Kind) + `, ` +
-				arg(d.File) + `, ` +
-				arg(languageID) + `, ` +
-				`now(), ` +
-				arg(data) + `, ` +
-				arg(bow) + `, ` +
-				arg(docstring) + `
-WHERE NOT EXISTS (SELECT * FROM upsert);`
-			upsertSQLs = append(upsertSQLs, upsert{query: upsertSQL, args: args})
+			var (
+				argName      = arg(d.Name)
+				argKind      = arg(d.Kind)
+				argFile      = arg(d.File)
+				argLanguage  = arg(languageID)
+				argCommitID  = arg(d.CommitID)
+				argData      = arg(data)
+				argBow       = arg(bow)
+				argDocstring = arg(docstring)
+				argRepo      = arg(d.Repo)
+				argUnitType  = arg(d.UnitType)
+				argUnit      = arg(d.Unit)
+				argPath      = arg(d.Path)
+			)
+			for _, table := range []string{"global_defs", "local_defs"} {
+				upsertSQL := `
+	WITH upsert AS (
+	UPDATE ` + table + ` SET name=` + argName +
+					`, kind=` + argKind +
+					`, file=` + argFile +
+					`, language=` + argLanguage +
+					`, commit_id=` + argCommitID +
+					`, updated_at=now()` +
+					`, data=` + argData +
+					`, bow=` + argBow +
+					`, doc=` + argDocstring +
+					` WHERE repo=` + argRepo +
+					` AND unit_type=` + argUnitType +
+					` AND unit=` + argUnit +
+					` AND path=` + argPath +
+					` RETURNING *
+	)
+	INSERT INTO ` + table + ` (repo, commit_id, unit_type, unit, path, name, kind, file, language, updated_at, data, bow, doc) SELECT ` +
+					argRepo + `, ` +
+					argCommitID + `, ` +
+					argUnitType + `, ` +
+					argUnit + `, ` +
+					argPath + `, ` +
+					argName + `, ` +
+					argKind + `, ` +
+					argFile + `, ` +
+					argLanguage + `, ` +
+					`now(), ` +
+					argData + `, ` +
+					argBow + `, ` +
+					argDocstring + `
+	WHERE NOT EXISTS (SELECT * FROM upsert);`
+				upsertSQLs = append(upsertSQLs, upsert{query: upsertSQL, args: args})
+			}
 		}
 
 		if err := dbutil.Transact(graphDBH(ctx), func(tx gorp.SqlExecutor) error {
@@ -398,7 +424,9 @@ WHERE NOT EXISTS (SELECT * FROM upsert);`
 				}
 			}
 
-			// Delete old entries
+			// Delete old entries from the global_defs table. We don't do this
+			// for local_defs because it includes all commits rather than just
+			// the most recently inserted (the default branch).
 			if _, err := tx.Exec(`DELETE FROM global_defs WHERE repo=$1 AND unit_type=$2 AND unit=$3 AND commit_id!=$4`,
 				repoUnit.RepoURI, repoUnit.UnitType, repoUnit.Unit, commitID); err != nil {
 				return err
@@ -425,19 +453,21 @@ func (g *globalDefs) RefreshRefCounts(ctx context.Context, op store.GlobalDefUpd
 		return err
 	}
 
-	for _, repoUnit := range repoUnits {
-		updateSQL := `UPDATE global_defs d
-SET ref_ct = refs.ref_ct
-FROM (SELECT def_keys.repo def_repo, def_keys.unit_type def_unit_type, def_keys.unit def_unit, def_keys.path def_path, sum(global_refs_new.count) ref_ct
-      FROM global_refs_new
-      INNER JOIN def_keys
-      ON global_refs_new.def_key_id = def_keys.id
-      WHERE def_keys.repo=$1 AND def_keys.unit_type=$2 AND def_keys.unit=$3
-      GROUP BY def_repo, def_unit_type, def_unit, def_path) refs
-WHERE repo=def_repo AND unit_type=refs.def_unit_type AND unit=refs.def_unit AND path=refs.def_path;`
-		_, err := graphDBH(ctx).Exec(updateSQL, repoUnit.RepoURI, repoUnit.UnitType, repoUnit.Unit)
-		if err != nil {
-			return err
+	for _, table := range []string{"global_defs", "local_defs"} {
+		for _, repoUnit := range repoUnits {
+			updateSQL := `UPDATE ` + table + ` d
+	SET ref_ct = refs.ref_ct
+	FROM (SELECT def_keys.repo def_repo, def_keys.unit_type def_unit_type, def_keys.unit def_unit, def_keys.path def_path, sum(global_refs_new.count) ref_ct
+	      FROM global_refs_new
+	      INNER JOIN def_keys
+	      ON global_refs_new.def_key_id = def_keys.id
+	      WHERE def_keys.repo=$1 AND def_keys.unit_type=$2 AND def_keys.unit=$3
+	      GROUP BY def_repo, def_unit_type, def_unit, def_path) refs
+	WHERE repo=def_repo AND unit_type=refs.def_unit_type AND unit=refs.def_unit AND path=refs.def_path;`
+			_, err := graphDBH(ctx).Exec(updateSQL, repoUnit.RepoURI, repoUnit.UnitType, repoUnit.Unit)
+			if err != nil {
+				return err
+			}
 		}
 	}
 	return nil
