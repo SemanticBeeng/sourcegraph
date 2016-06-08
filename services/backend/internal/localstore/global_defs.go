@@ -229,6 +229,9 @@ func (g *globalDefs) Search(ctx context.Context, op *store.GlobalDefSearchOp) (*
 			wheres = append(wheres, `kind NOT IN (`+strings.Join(notKindList, ", ")+`)`)
 		}
 
+		if len(op.Opt.Repos) > 0 && op.Opt.CommitID != "" {
+			wheres = append(wheres, `commit_id=`+arg(op.Opt.CommitID))
+		}
 		if op.UnitQuery != "" {
 			wheres = append(wheres, `unit=`+arg(op.UnitQuery))
 		}
