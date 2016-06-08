@@ -166,34 +166,65 @@ func (s *defs) List(ctx context.Context, opt *sourcegraph.DefListOptions) (*sour
 	// 	return &sourcegraph.DefList{}, nil
 	// }
 
-	fs := defListOptionsFilters(opt)
-	fs = append(fs, srcstore.DefsSortByKey{})
-	defs0, err := store.GraphFromContext(ctx).Defs(fs...)
-	if err != nil {
-		return nil, err
-	}
+	var (
+		defs  []*sourcegraph.Def
+		total int
+	)
 
-	// Optimization; since the caller may request a large page limit (see note below)
-	// initialize return slice with correct length.
-	var numEntries int
-	if len(defs0) < opt.Offset()+opt.Limit() {
-		numEntries = len(defs0) - opt.Offset()
+	if opt.Query == "" {
+		fs := defListOptionsFilters(opt)
+		fs = append(fs, srcstore.DefsSortByKey{})
+		defs0, err := store.GraphFromContext(ctx).Defs(fs...)
+		if err != nil {
+			return nil, err
+		}
+
+		// Optimization; since the caller may request a large page limit (see note below)
+		// initialize return slice with correct length.
+		var numEntries int
+		if len(defs0) < opt.Offset()+opt.Limit() {
+			numEntries = len(defs0) - opt.Offset()
+		} else {
+			numEntries = opt.Limit()
+		}
+		if numEntries < 0 {
+			numEntries = 0 // for last (or non-existent) pages
+		}
+
+		// NOTE: pagination is broken because the ordering of defs0 is non-deterministic.
+		defs = make([]*sourcegraph.Def, numEntries)
+		for i, def0 := range defs0 {
+			if i >= opt.Offset() && i < (opt.Offset()+opt.Limit()) {
+				defs[i-opt.Offset()] = &sourcegraph.Def{Def: *def0}
+			}
+		}
+		// End kludge
+		total = len(defs0)
 	} else {
-		numEntries = opt.Limit()
-	}
-	if numEntries < 0 {
-		numEntries = 0 // for last (or non-existent) pages
-	}
-
-	// NOTE: pagination is broken because the ordering of defs0 is non-deterministic.
-	defs := make([]*sourcegraph.Def, numEntries)
-	for i, def0 := range defs0 {
-		if i >= opt.Offset() && i < (opt.Offset()+opt.Limit()) {
-			defs[i-opt.Offset()] = &sourcegraph.Def{Def: *def0}
+		var repos []int32
+		for _, repoRev := range opt.RepoRevs {
+			repoPath, _ := sourcegraph.ParseRepoAndCommitID(repoRev)
+			res, err := svc.Repos(ctx).Resolve(ctx, &sourcegraph.RepoResolveOp{Path: repoPath})
+			if err != nil {
+				return nil, err
+			}
+			repos = append(repos, res.Repo)
+		}
+		results, err := svc.Search(ctx).Search(ctx, &sourcegraph.SearchOp{
+			Query: opt.Query,
+			Opt: &sourcegraph.SearchOptions{
+				Repos:       repos,
+				ListOptions: opt.ListOptions,
+			},
+		})
+		if err != nil {
+			return nil, err
+		}
+		defs = make([]*sourcegraph.Def, len(results.DefResults))
+		for i, result := range results.DefResults {
+			defs[i] = &result.Def
 		}
 	}
-	// End kludge
-	total := len(defs0)
 
 	if opt.Doc {
 		for _, def := range defs {
