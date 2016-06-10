@@ -167,3 +167,31 @@ export class ResetPasswordCompleted {
 		this.eventName = "ResetPasswordCompleted";
 	}
 }
+
+export class SubmitEmailSubscription {
+	email: string;
+	firstName: string;
+	lastName: string;
+	language: string;
+	editor: string;
+	listID: string;
+
+	constructor(email: string, firstName: string, lastName: string, language: string, editor: string, listID: string) {
+		this.email = email;
+		this.firstName = firstName;
+		this.lastName = lastName;
+		this.language = language;
+		this.editor = editor;
+		this.listID = listID;
+	}
+}
+
+export class EmailSubscriptionCompleted {
+	resp: any;
+	eventName: string;
+
+	constructor(resp: any) {
+		this.resp = resp;
+		this.eventName = "EmailSubscriptionCompleted";
+	}
+}

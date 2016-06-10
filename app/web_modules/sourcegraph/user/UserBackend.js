@@ -157,6 +157,33 @@ const UserBackend = {
 					})
 			);
 			break;
+			// /-/email-subscription
+		case UserActions.SubmitEmailSubscription:
+			console.log("heading into subscription post");
+			trackPromise(
+				UserBackend.fetch(`/.api/email-subscription`, {
+					method: "POST",
+					body: JSON.stringify({
+						status: "subscribed",
+						email_address: action.email,
+						merge_fields: {
+							FNAME: action.firstName,
+							LNAME: action.lastName,
+							PLANGUAGE: action.language,
+							EDITOR: action.editor,
+							listID: action.listID,
+						},
+
+					}),
+				})
+					.then(checkStatus)
+					.then((resp) => resp.json())
+					.catch((err) => ({Error: err}))
+					.then((data) => {
+						Dispatcher.Stores.dispatch(new UserActions.EmailSubscriptionCompleted(data));
+					})
+			);
+			break;
 		}
 	},
 };
