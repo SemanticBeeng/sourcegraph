@@ -16,25 +16,29 @@ class FileDiff extends Component {
 	}
 
 	onStateTransition(prevState, nextState) {
-		if (nextState.baseRepo !== prevState.baseRepo || nextState.baseRev !== prevState.baseRev || nextState.diff.OrigName !== prevState.diff.OrigName) {
-			if (!isDevNull(nextState.diff.OrigName)) Dispatcher.Backends.dispatch(new BlobActions.WantAnnotations(nextState.baseRepo, nextState.baseRev, "", nextState.diff.OrigName));
+		if (nextState.baseRepo !== prevState.baseRepo || nextState.baseRev !== prevState.baseRev || nextState.diff !== prevState.diff) {
+			if (nextState.diff && nextState.baseRepo && nextState.baseRev && !isDevNull(nextState.diff.OrigName)) {
+				Dispatcher.Backends.dispatch(new BlobActions.WantAnnotations(nextState.baseRepo, nextState.baseRev, nextState.diff.OrigName));
+			}
 		}
-		if (nextState.headRepo !== prevState.headRepo || nextState.headRev !== prevState.headRev || nextState.diff.NewName !== prevState.diff.NewName) {
-			if (!isDevNull(nextState.diff.NewName)) Dispatcher.Backends.dispatch(new BlobActions.WantAnnotations(nextState.headRepo, nextState.headRev, "", nextState.diff.NewName));
+		if (nextState.headRepo !== prevState.headRepo || nextState.headRev !== prevState.headRev || nextState.diff !== prevState.diff) {
+			if (nextState.headRepo && nextState.headRev && nextState.diff && !isDevNull(nextState.diff.NewName)) {
+				Dispatcher.Backends.dispatch(new BlobActions.WantAnnotations(nextState.headRepo, nextState.headRev, nextState.diff.NewName));
+			}
 		}
 	}
 
 	_groupAnnotationsByHunk(hunks) {
-		let baseAnns = this.state.annotations.get(this.state.baseRepo, this.state.baseRev, "", this.state.diff.OrigName);
-		let headAnns = this.state.annotations.get(this.state.headRepo, this.state.headRev, "", this.state.diff.NewName);
+		let baseAnns = this.state.annotations.get(this.state.baseRepo, this.state.baseRev, this.state.diff.OrigName);
+		let headAnns = this.state.annotations.get(this.state.headRepo, this.state.headRev, this.state.diff.NewName);
 		return hunks.map((hunk) => {
 			let baseStart = baseAnns ? baseAnns.LineStartBytes[hunk.OrigStartLine - 1] : null;
 			let baseEnd = baseAnns ? baseAnns.LineStartBytes[hunk.OrigStartLine + hunk.OrigLines - 1] : null;
-			let hunkBaseAnns = baseAnns ? baseAnns.Annotations.filter((ann) => ann.StartByte >= baseStart && ann.EndByte < baseEnd) : [];
+			let hunkBaseAnns = baseAnns ? (baseAnns.Annotations || []).filter((ann) => ann.StartByte >= baseStart && ann.EndByte < baseEnd) : [];
 
 			let headStart = headAnns ? headAnns.LineStartBytes[hunk.NewStartLine - 1] : null;
 			let headEnd = headAnns ? headAnns.LineStartBytes[hunk.NewStartLine + hunk.NewLines - 1] : null;
-			let hunkHeadAnns = headAnns ? headAnns.Annotations.filter((ann) => ann.StartByte >= headStart && ann.EndByte < headEnd) : [];
+			let hunkHeadAnns = headAnns ? (headAnns.Annotations || []).filter((ann) => ann.StartByte >= headStart && ann.EndByte < headEnd) : [];
 
 			let resultAnns = [];
 			let lines = fileLines(atob(hunk.Body));
@@ -68,7 +72,7 @@ class FileDiff extends Component {
 					break;
 
 				case " ":
-					if (headAnns && (!baseAnns || headAnns.Annotations.length > baseAnns.Annotations.length)) addLineAnns(hunkHeadAnns, headAnns.LineStartBytes[newLine - 1], line.length);
+					if (headAnns && (!baseAnns || !baseAnns.Annotations || (headAnns.Annotations && headAnns.Annotations.length > baseAnns.Annotations.length))) addLineAnns(hunkHeadAnns, headAnns.LineStartBytes[newLine - 1], line.length);
 					else if (baseAnns) addLineAnns(hunkBaseAnns, baseAnns.LineStartBytes[origLine - 1], line.length);
 					origLine++;
 					newLine++;

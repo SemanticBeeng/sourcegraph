@@ -11,8 +11,8 @@ class Hunk extends React.Component {
 
 		let lines = fileLines(atob(hunk.Body));
 
-		let origLine = hunk.OrigStartLine;
-		let newLine = hunk.NewStartLine;
+		let origLine = hunk.OrigStartLine || 0;
+		let newLine = hunk.NewStartLine || 0;
 
 		let lineStartByte = 0;
 

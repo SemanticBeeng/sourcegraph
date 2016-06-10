@@ -1,0 +1,52 @@
+@value vars "sourcegraph/components/styles/_vars.css";
+@value base "sourcegraph/components/styles/_base.css";
+@value colors "sourcegraph/components/styles/_colors.css";
+@value layout "sourcegraph/components/styles/_layout.css";
+@value typography "sourcegraph/components/styles/_typography.css";
+@value GlobalNav "sourcegraph/app/styles/GlobalNav.css";
+
+.container {
+	max-width: 320px;
+	composes: pv3 from base;
+}
+.header {
+	display: flex;
+	justify-content: space-between;
+	cursor: pointer;
+	color: black;
+	user-select: none;
+}
+.stats {
+	float: right;
+	font-weight: bold;
+}
+.count {
+
+}
+
+.files {
+	list-style-type: none;
+	composes: pl0 mv0 from base;
+}
+.closed {
+	display: none;
+}
+.file {
+	color: black;
+	user-select: none;
+}
+.change-type {
+	display: inline-block;
+	font-weight: bold;
+	composes: pr2 from base;
+}
+
+.additions-color {
+	color: green;
+}
+.deletions-color {
+	color: red;
+}
+.changes-color {
+	color: orange;
+}
