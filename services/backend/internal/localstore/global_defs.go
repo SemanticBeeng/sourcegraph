@@ -13,6 +13,7 @@ import (
 	"sourcegraph.com/sourcegraph/sourcegraph/pkg/inventory/filelang"
 	"sourcegraph.com/sourcegraph/sourcegraph/pkg/search"
 	"sourcegraph.com/sourcegraph/sourcegraph/pkg/store"
+	"sourcegraph.com/sourcegraph/sourcegraph/pkg/vcs"
 	"sourcegraph.com/sourcegraph/sourcegraph/services/backend/accesscontrol"
 	"sourcegraph.com/sourcegraph/srclib/graph"
 	sstore "sourcegraph.com/sourcegraph/srclib/store"
@@ -306,135 +307,142 @@ func (g *globalDefs) Update(ctx context.Context, op store.GlobalDefUpdateOp) err
 	}
 
 	for _, repoUnit := range repoUnits {
-		repoPath, commitID, err := resolveRevisionDefaultBranch(ctx, repoUnit.Repo)
-		if err != nil {
-			return err
-		}
-		defs, err := store.GraphFromContext(ctx).Defs(
-			sstore.ByRepoCommitIDs(sstore.Version{Repo: repoPath, CommitID: commitID}),
-			sstore.ByUnits(unit.ID2{Type: repoUnit.UnitType, Name: repoUnit.Unit}),
-		)
+		repoPath, commitIDs, defaultBranchCommitID, err := resolveRevisionAllBranches(ctx, repoUnit.Repo)
 		if err != nil {
 			return err
 		}
 
-		type upsert struct {
-			query string
-			args  []interface{}
-		}
-		var upsertSQLs []upsert
-		for _, d := range defs {
-			// Ignore broken defs
-			if d.Path == "" {
-				continue
-			}
-			// Ignore local defs (KLUDGE)
-			if d.Local || strings.Contains(d.Path, "$") {
-				continue
-			}
-			// Ignore vendored defs
-			if filelang.IsVendored(d.File, false) {
-				continue
-			}
-
-			if d.Repo == "" {
-				d.Repo = repoPath
-			}
-
-			var docstring string
-			if len(d.Docs) == 1 {
-				docstring = d.Docs[0].Data
-			} else {
-				for _, candidate := range d.Docs {
-					if candidate.Format == "" || strings.ToLower(candidate.Format) == "text/plain" {
-						docstring = candidate.Data
-					}
-				}
-			}
-
-			data, err := d.Data.Marshal()
-			if err != nil {
-				data = []byte{}
-			}
-			bow := strings.Join(search.BagOfWordsToTokens(search.BagOfWords(d)), " ")
-
-			languageID := languages[strings.ToLower(graph.PrintFormatter(d).Language())]
-
-			var args []interface{}
-			arg := func(v interface{}) string {
-				args = append(args, v)
-				return gorp.PostgresDialect{}.BindVar(len(args) - 1)
-			}
-
-			var (
-				argName      = arg(d.Name)
-				argKind      = arg(d.Kind)
-				argFile      = arg(d.File)
-				argLanguage  = arg(languageID)
-				argCommitID  = arg(d.CommitID)
-				argData      = arg(data)
-				argBow       = arg(bow)
-				argDocstring = arg(docstring)
-				argRepo      = arg(d.Repo)
-				argUnitType  = arg(d.UnitType)
-				argUnit      = arg(d.Unit)
-				argPath      = arg(d.Path)
+		for _, commitID := range commitIDs {
+			defs, err := store.GraphFromContext(ctx).Defs(
+				sstore.ByRepoCommitIDs(sstore.Version{Repo: repoPath, CommitID: commitID}),
+				sstore.ByUnits(unit.ID2{Type: repoUnit.UnitType, Name: repoUnit.Unit}),
 			)
-			for _, table := range []string{"global_defs", "local_defs"} {
-				upsertSQL := `
-	WITH upsert AS (
-	UPDATE ` + table + ` SET name=` + argName +
-					`, kind=` + argKind +
-					`, file=` + argFile +
-					`, language=` + argLanguage +
-					`, commit_id=` + argCommitID +
-					`, updated_at=now()` +
-					`, data=` + argData +
-					`, bow=` + argBow +
-					`, doc=` + argDocstring +
-					` WHERE repo=` + argRepo +
-					` AND unit_type=` + argUnitType +
-					` AND unit=` + argUnit +
-					` AND path=` + argPath +
-					` RETURNING *
-	)
-	INSERT INTO ` + table + ` (repo, commit_id, unit_type, unit, path, name, kind, file, language, updated_at, data, bow, doc) SELECT ` +
-					argRepo + `, ` +
-					argCommitID + `, ` +
-					argUnitType + `, ` +
-					argUnit + `, ` +
-					argPath + `, ` +
-					argName + `, ` +
-					argKind + `, ` +
-					argFile + `, ` +
-					argLanguage + `, ` +
-					`now(), ` +
-					argData + `, ` +
-					argBow + `, ` +
-					argDocstring + `
-	WHERE NOT EXISTS (SELECT * FROM upsert);`
-				upsertSQLs = append(upsertSQLs, upsert{query: upsertSQL, args: args})
-			}
-		}
-
-		if err := dbutil.Transact(graphDBH(ctx), func(tx gorp.SqlExecutor) error {
-			for _, upsertSQL := range upsertSQLs {
-				if _, err := tx.Exec(upsertSQL.query, upsertSQL.args...); err != nil {
-					return err
-				}
-			}
-
-			// Delete old entries from the global_defs table. We don't do this
-			// for local_defs because it includes all commits rather than just
-			// the most recently inserted (the default branch).
-			if _, err := tx.Exec(`DELETE FROM global_defs WHERE repo=$1 AND unit_type=$2 AND unit=$3 AND commit_id!=$4`,
-				repoUnit.RepoURI, repoUnit.UnitType, repoUnit.Unit, commitID); err != nil {
+			if err != nil {
 				return err
 			}
-			return nil
 
-		}); err != nil { // end transaction
-			return err
+			type upsert struct {
+				query string
+				args  []interface{}
+			}
+			var upsertSQLs []upsert
+			for _, d := range defs {
+				// Ignore broken defs
+				if d.Path == "" {
+					continue
+				}
+				// Ignore local defs (KLUDGE)
+				if d.Local || strings.Contains(d.Path, "$") {
+					continue
+				}
+				// Ignore vendored defs
+				if filelang.IsVendored(d.File, false) {
+					continue
+				}
+
+				if d.Repo == "" {
+					d.Repo = repoPath
+				}
+
+				var docstring string
+				if len(d.Docs) == 1 {
+					docstring = d.Docs[0].Data
+				} else {
+					for _, candidate := range d.Docs {
+						if candidate.Format == "" || strings.ToLower(candidate.Format) == "text/plain" {
+							docstring = candidate.Data
+						}
+					}
+				}
+
+				data, err := d.Data.Marshal()
+				if err != nil {
+					data = []byte{}
+				}
+				bow := strings.Join(search.BagOfWordsToTokens(search.BagOfWords(d)), " ")
+
+				languageID := languages[strings.ToLower(graph.PrintFormatter(d).Language())]
+
+				var args []interface{}
+				arg := func(v interface{}) string {
+					args = append(args, v)
+					return gorp.PostgresDialect{}.BindVar(len(args) - 1)
+				}
+
+				var (
+					argName      = arg(d.Name)
+					argKind      = arg(d.Kind)
+					argFile      = arg(d.File)
+					argLanguage  = arg(languageID)
+					argCommitID  = arg(d.CommitID)
+					argData      = arg(data)
+					argBow       = arg(bow)
+					argDocstring = arg(docstring)
+					argRepo      = arg(d.Repo)
+					argUnitType  = arg(d.UnitType)
+					argUnit      = arg(d.Unit)
+					argPath      = arg(d.Path)
+				)
+				tables := []string{"local_defs"}
+				if commitID == defaultBranchCommitID {
+					tables = append(tables, "global_defs")
+				}
+				for _, table := range tables {
+					upsertSQL := `
+		WITH upsert AS (
+		UPDATE ` + table + ` SET name=` + argName +
+						`, kind=` + argKind +
+						`, file=` + argFile +
+						`, language=` + argLanguage +
+						`, commit_id=` + argCommitID +
+						`, updated_at=now()` +
+						`, data=` + argData +
+						`, bow=` + argBow +
+						`, doc=` + argDocstring +
+						` WHERE repo=` + argRepo +
+						` AND unit_type=` + argUnitType +
+						` AND unit=` + argUnit +
+						` AND path=` + argPath +
+						` RETURNING *
+		)
+		INSERT INTO ` + table + ` (repo, commit_id, unit_type, unit, path, name, kind, file, language, updated_at, data, bow, doc) SELECT ` +
+						argRepo + `, ` +
+						argCommitID + `, ` +
+						argUnitType + `, ` +
+						argUnit + `, ` +
+						argPath + `, ` +
+						argName + `, ` +
+						argKind + `, ` +
+						argFile + `, ` +
+						argLanguage + `, ` +
+						`now(), ` +
+						argData + `, ` +
+						argBow + `, ` +
+						argDocstring + `
+		WHERE NOT EXISTS (SELECT * FROM upsert);`
+					upsertSQLs = append(upsertSQLs, upsert{query: upsertSQL, args: args})
+				}
+			}
+
+			if err := dbutil.Transact(graphDBH(ctx), func(tx gorp.SqlExecutor) error {
+				for _, upsertSQL := range upsertSQLs {
+					if _, err := tx.Exec(upsertSQL.query, upsertSQL.args...); err != nil {
+						return err
+					}
+				}
+
+				// Delete old entries from the global_defs table. We don't do this
+				// for local_defs because it includes all commits rather than just
+				// the most recently inserted (the default branch).
+				if _, err := tx.Exec(`DELETE FROM global_defs WHERE repo=$1 AND unit_type=$2 AND unit=$3 AND commit_id!=$4`,
+					repoUnit.RepoURI, repoUnit.UnitType, repoUnit.Unit, commitID); err != nil {
+					return err
+				}
+				return nil
+
+			}); err != nil { // end transaction
+				return err
+			}
 		}
 	}
 
@@ -525,6 +533,29 @@ func resolveRevisionDefaultBranch(ctx context.Context, repo int32) (repoPath, co
 		return
 	}
 	return repoObj.URI, string(c), nil
+}
+
+func resolveRevisionAllBranches(ctx context.Context, repo int32) (repoPath string, commitIDs []string, defaultBranchCommitID string, err error) {
+	repoObj, err := store.ReposFromContext(ctx).Get(ctx, repo)
+	if err != nil {
+		return
+	}
+	vcsrepo, err := store.RepoVCSFromContext(ctx).Open(ctx, repoObj.ID)
+	if err != nil {
+		return
+	}
+	branches, err := vcsrepo.Branches(vcs.BranchesOptions{IncludeCommit: true})
+	if err != nil {
+		return
+	}
+	for _, branch := range branches {
+		commitIDs = append(commitIDs, string(branch.Commit.ID))
+	}
+	defaultBranchCommit, err := vcsrepo.ResolveRevision(repoObj.DefaultBranch)
+	if err != nil {
+		return
+	}
+	return repoObj.URI, commitIDs, string(defaultBranchCommit), nil
 }
 
 func repoURIs(ctx context.Context, repoIDs []int32) (uris []string, err error) {
