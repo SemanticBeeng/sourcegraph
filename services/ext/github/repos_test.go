@@ -58,7 +58,7 @@ func testRepos_Get(t *testing.T, private bool) {
 		},
 	})
 
-	repo, err := (&Repos{}).Get(ctx, "github.com/owner/repo")
+	repo, err := (&repos{}).Get(ctx, "github.com/owner/repo")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,7 +74,7 @@ func testRepos_Get(t *testing.T, private bool) {
 
 	// Test that repo is not cached and fetched from client on second request.
 	calledGet = false
-	repo, err = (&Repos{}).Get(ctx, "github.com/owner/repo")
+	repo, err = (&repos{}).Get(ctx, "github.com/owner/repo")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -111,7 +111,7 @@ func TestRepos_Get_nonexistent(t *testing.T) {
 		},
 	})
 
-	s := &Repos{}
+	s := &repos{}
 	nonexistentRepo := "github.com/owner/repo"
 	repo, err := s.Get(ctx, nonexistentRepo)
 	if grpc.Code(err) != codes.NotFound {
@@ -140,7 +140,7 @@ func TestRepos_GetByID_existing(t *testing.T) {
 		},
 	})
 
-	repo, err := (&Repos{}).GetByID(ctx, 123)
+	repo, err := (&repos{}).GetByID(ctx, 123)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -169,7 +169,7 @@ func TestRepos_GetByID_nonexistent(t *testing.T) {
 		},
 	})
 
-	s := &Repos{}
+	s := &repos{}
 	repo, err := s.GetByID(ctx, 456)
 	if grpc.Code(err) != codes.NotFound {
 		t.Fatal(err)

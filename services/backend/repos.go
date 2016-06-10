@@ -78,6 +78,32 @@ func (s *repos) Get(ctx context.Context, repoSpec *sourcegraph.RepoSpec) (*sourc
 	if repo.Blocked {
 		return nil, grpc.Errorf(codes.FailedPrecondition, "repo %s is blocked", repo)
 	}
+
+	// No need to fetch meta for non-mirror repositories.
+	if !repo.Mirror {
+		return repo, nil
+	}
+	// Sync metadata from GitHub to DB.
+	ghrepo, err := github.ReposFromContext(ctx).Get(ctx, repo.URI)
+	if err != nil {
+		return nil, err
+	}
+
+	var forkOp sourcegraph.ReposUpdateOp_ForkType
+	if ghrepo.Fork {
+		forkOp = sourcegraph.ReposUpdateOp_TRUE
+	} else {
+		forkOp = sourcegraph.ReposUpdateOp_FALSE
+	}
+	if err = store.ReposFromContext(ctx).Update(ctx, store.RepoUpdate{
+		ReposUpdateOp: &sourcegraph.ReposUpdateOp{
+			Repo:        repoSpec.ID,
+			Description: ghrepo.Description,
+			Fork:        forkOp,
+		},
+	}); err != nil {
+		return nil, err
+	}
 	return repo, nil
 }
 
@@ -105,7 +131,7 @@ func (s *repos) setRepoFieldsFromRemote(ctx context.Context, repo *sourcegraph.R
 	// Fetch latest metadata from GitHub (we don't even try to keep
 	// our cache up to date).
 	if strings.HasPrefix(strings.ToLower(repo.URI), "github.com/") {
-		ghrepo, err := (&github.Repos{}).Get(ctx, repo.URI)
+		ghrepo, err := github.ReposFromContext(ctx).Get(ctx, repo.URI)
 		if err != nil {
 			return err
 		}
@@ -202,7 +228,7 @@ func (s *repos) newRepo(ctx context.Context, op *sourcegraph.ReposCreateOp_NewRe
 }
 
 func (s *repos) newRepoFromGitHubID(ctx context.Context, gitHubID int) (*sourcegraph.Repo, error) {
-	ghrepo, err := (&github.Repos{}).GetByID(ctx, gitHubID)
+	ghrepo, err := github.ReposFromContext(ctx).GetByID(ctx, gitHubID)
 	if err != nil {
 		return nil, err
 	}

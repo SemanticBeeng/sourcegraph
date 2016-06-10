@@ -7,6 +7,7 @@ import (
 	"golang.org/x/net/context"
 
 	"sourcegraph.com/sourcegraph/sourcegraph/api/sourcegraph"
+	"sourcegraph.com/sourcegraph/sourcegraph/services/ext/github"
 	"sourcegraph.com/sourcegraph/sourcegraph/services/platform"
 )
 
@@ -18,9 +19,17 @@ func TestReposService_Get(t *testing.T) {
 		ID:      1,
 		URI:     "r",
 		HTMLURL: "http://example.com/r",
+		Mirror:  true,
 	}
 
-	calledGet := mock.stores.Repos.MockGet_Path(t, 1, "r")
+	ctx = github.WithRepos(ctx, mockGitHubRepoGetter{
+		Get_: func(context.Context, string) (*sourcegraph.RemoteRepo, error) {
+			return &sourcegraph.RemoteRepo{}, nil
+		},
+	})
+
+	calledGet := mock.stores.Repos.MockGet_Return(t, wantRepo)
+	calledUpdate := mock.stores.Repos.MockUpdate(t, 1)
 
 	repo, err := s.Get(ctx, &sourcegraph.RepoSpec{ID: 1})
 	if err != nil {
@@ -28,6 +37,9 @@ func TestReposService_Get(t *testing.T) {
 	}
 	if !*calledGet {
 		t.Error("!calledGet")
+	}
+	if !*calledUpdate {
+		t.Error("!calledUpdate")
 	}
 	if !reflect.DeepEqual(repo, wantRepo) {
 		t.Errorf("got %+v, want %+v", repo, wantRepo)

@@ -17,13 +17,6 @@ const gitHubPublicRepoQuery = `SELECT repo.* FROM repo
 				ORDER BY repo.updated_at desc NULLS LAST
 				LIMIT $1 OFFSET $2`
 
-// GitHubRepoGetter is useful for mocking the GitHub API functionality.
-type GitHubRepoGetter interface {
-	Get(context.Context, string) (*sourcegraph.RemoteRepo, error)
-}
-
-var repoGetter GitHubRepoGetter = &github.Repos{}
-
 // listAllPublicGitHubPublic is a special case repos.List specifically for use by the sitemap.
 //
 // KLUDGE: Normally, we would not want to return any repos with a URI that starts with github.com/
@@ -47,7 +40,7 @@ func removePrivateGitHubRepos(ctx context.Context, repos []*sourcegraph.Repo) ([
 	var publicRepos []*sourcegraph.Repo
 	for _, repo := range repos {
 		if strings.HasPrefix(strings.ToLower(repo.URI), "github.com/") {
-			r, err := repoGetter.Get(ctx, repo.URI)
+			r, err := github.ReposFromContext(ctx).Get(ctx, repo.URI)
 			if err != nil {
 				if grpc.Code(err) != codes.Unauthenticated &&
 					grpc.Code(err) != codes.PermissionDenied &&

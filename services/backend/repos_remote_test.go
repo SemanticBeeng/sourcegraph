@@ -8,7 +8,9 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 
+	gogithub "github.com/sourcegraph/go-github/github"
 	"sourcegraph.com/sourcegraph/sourcegraph/api/sourcegraph"
+	"sourcegraph.com/sourcegraph/sourcegraph/services/ext/github"
 )
 
 func TestRepos_Resolve_local(t *testing.T) {
@@ -30,6 +32,24 @@ func TestRepos_Resolve_local(t *testing.T) {
 	}
 }
 
+type mockGitHubRepoGetter struct {
+	Get_            func(context.Context, string) (*sourcegraph.RemoteRepo, error)
+	GetByID_        func(context.Context, int) (*sourcegraph.RemoteRepo, error)
+	ListAccessible_ func(context.Context, *gogithub.RepositoryListOptions) ([]*sourcegraph.RemoteRepo, error)
+}
+
+func (s mockGitHubRepoGetter) Get(ctx context.Context, repo string) (*sourcegraph.RemoteRepo, error) {
+	return s.Get_(ctx, repo)
+}
+
+func (s mockGitHubRepoGetter) GetByID(ctx context.Context, id int) (*sourcegraph.RemoteRepo, error) {
+	return s.GetByID_(ctx, id)
+}
+
+func (s mockGitHubRepoGetter) ListAccessible(ctx context.Context, opt *gogithub.RepositoryListOptions) ([]*sourcegraph.RemoteRepo, error) {
+	return s.ListAccessible_(ctx, opt)
+}
+
 func TestRepos_Resolve_local_otherError(t *testing.T) {
 	ctx, mock := testContext()
 
@@ -40,14 +60,12 @@ func TestRepos_Resolve_local_otherError(t *testing.T) {
 	}
 
 	var calledGetGitHubRepo bool
-	origGetGitHubRepo := getGitHubRepo
-	defer func() {
-		getGitHubRepo = origGetGitHubRepo
-	}()
-	getGitHubRepo = func(ctx context.Context, repo string) (*sourcegraph.RemoteRepo, error) {
-		calledGetGitHubRepo = true
-		return nil, grpc.Errorf(codes.Internal, "")
-	}
+	ctx = github.WithRepos(ctx, mockGitHubRepoGetter{
+		Get_: func(ctx context.Context, repo string) (*sourcegraph.RemoteRepo, error) {
+			calledGetGitHubRepo = true
+			return nil, grpc.Errorf(codes.Internal, "")
+		},
+	})
 
 	_, err := (&repos{}).Resolve(ctx, &sourcegraph.RepoResolveOp{Path: "r"})
 	if grpc.Code(err) != codes.Internal {
@@ -71,14 +89,12 @@ func TestRepos_Resolve_GitHub_NonRemote(t *testing.T) {
 	}
 
 	var calledGetGitHubRepo bool
-	origGetGitHubRepo := getGitHubRepo
-	defer func() {
-		getGitHubRepo = origGetGitHubRepo
-	}()
-	getGitHubRepo = func(ctx context.Context, repo string) (*sourcegraph.RemoteRepo, error) {
-		calledGetGitHubRepo = true
-		return &sourcegraph.RemoteRepo{GitHubID: 123}, nil
-	}
+	ctx = github.WithRepos(ctx, mockGitHubRepoGetter{
+		Get_: func(ctx context.Context, repo string) (*sourcegraph.RemoteRepo, error) {
+			calledGetGitHubRepo = true
+			return &sourcegraph.RemoteRepo{GitHubID: 123}, nil
+		},
+	})
 
 	if _, err := (&repos{}).Resolve(ctx, &sourcegraph.RepoResolveOp{Path: "r", Remote: false}); grpc.Code(err) != codes.NotFound {
 		t.Errorf("got error %v, want NotFound", err)
@@ -101,14 +117,12 @@ func TestRepos_Resolve_GitHub_Remote(t *testing.T) {
 	}
 
 	var calledGetGitHubRepo bool
-	origGetGitHubRepo := getGitHubRepo
-	defer func() {
-		getGitHubRepo = origGetGitHubRepo
-	}()
-	getGitHubRepo = func(ctx context.Context, repo string) (*sourcegraph.RemoteRepo, error) {
-		calledGetGitHubRepo = true
-		return &sourcegraph.RemoteRepo{GitHubID: 123}, nil
-	}
+	ctx = github.WithRepos(ctx, mockGitHubRepoGetter{
+		Get_: func(ctx context.Context, repo string) (*sourcegraph.RemoteRepo, error) {
+			calledGetGitHubRepo = true
+			return &sourcegraph.RemoteRepo{GitHubID: 123}, nil
+		},
+	})
 
 	res, err := (&repos{}).Resolve(ctx, &sourcegraph.RepoResolveOp{Path: "r", Remote: true})
 	if err != nil {
@@ -137,14 +151,12 @@ func TestRepos_Resolve_GitHub_otherError(t *testing.T) {
 	}
 
 	var calledGetGitHubRepo bool
-	origGetGitHubRepo := getGitHubRepo
-	defer func() {
-		getGitHubRepo = origGetGitHubRepo
-	}()
-	getGitHubRepo = func(ctx context.Context, repo string) (*sourcegraph.RemoteRepo, error) {
-		calledGetGitHubRepo = true
-		return nil, grpc.Errorf(codes.Internal, "")
-	}
+	ctx = github.WithRepos(ctx, mockGitHubRepoGetter{
+		Get_: func(ctx context.Context, repo string) (*sourcegraph.RemoteRepo, error) {
+			calledGetGitHubRepo = true
+			return nil, grpc.Errorf(codes.Internal, "")
+		},
+	})
 
 	_, err := (&repos{}).Resolve(ctx, &sourcegraph.RepoResolveOp{Path: "r"})
 	if grpc.Code(err) != codes.Internal {
@@ -168,14 +180,12 @@ func TestRepos_Resolve_notFound(t *testing.T) {
 	}
 
 	var calledGetGitHubRepo bool
-	origGetGitHubRepo := getGitHubRepo
-	defer func() {
-		getGitHubRepo = origGetGitHubRepo
-	}()
-	getGitHubRepo = func(ctx context.Context, repo string) (*sourcegraph.RemoteRepo, error) {
-		calledGetGitHubRepo = true
-		return nil, grpc.Errorf(codes.NotFound, "")
-	}
+	ctx = github.WithRepos(ctx, mockGitHubRepoGetter{
+		Get_: func(ctx context.Context, repo string) (*sourcegraph.RemoteRepo, error) {
+			calledGetGitHubRepo = true
+			return nil, grpc.Errorf(codes.NotFound, "")
+		},
+	})
 
 	_, err := (&repos{}).Resolve(ctx, &sourcegraph.RepoResolveOp{Path: "r"})
 	if grpc.Code(err) != codes.NotFound {

@@ -181,22 +181,22 @@ func TestRepos_List_URIs(t *testing.T) {
 	}
 }
 
-type RepoGetterMockPublicRepo struct{}
-
-func (r *RepoGetterMockPublicRepo) Get(ctx context.Context, uri string) (*sourcegraph.RemoteRepo, error) {
-	return &sourcegraph.RemoteRepo{Private: false}, nil
+type mockGitHubRepoGetter struct {
+	Get_            func(context.Context, string) (*sourcegraph.RemoteRepo, error)
+	GetByID_        func(context.Context, int) (*sourcegraph.RemoteRepo, error)
+	ListAccessible_ func(context.Context, *gogithub.RepositoryListOptions) ([]*sourcegraph.RemoteRepo, error)
 }
 
-type RepoGetterMockPrivateRepo struct{}
-
-func (r *RepoGetterMockPrivateRepo) Get(ctx context.Context, uri string) (*sourcegraph.RemoteRepo, error) {
-	return &sourcegraph.RemoteRepo{Private: true}, nil
+func (s mockGitHubRepoGetter) Get(ctx context.Context, repo string) (*sourcegraph.RemoteRepo, error) {
+	return s.Get_(ctx, repo)
 }
 
-type RepoGetterMockUnauthorizedRepo struct{}
+func (s mockGitHubRepoGetter) GetByID(ctx context.Context, id int) (*sourcegraph.RemoteRepo, error) {
+	return s.GetByID_(ctx, id)
+}
 
-func (r *RepoGetterMockUnauthorizedRepo) Get(ctx context.Context, uri string) (*sourcegraph.RemoteRepo, error) {
-	return nil, grpc.Errorf(codes.Unauthenticated, "%s", "github.Repos.Get")
+func (s mockGitHubRepoGetter) ListAccessible(ctx context.Context, opt *gogithub.RepositoryListOptions) ([]*sourcegraph.RemoteRepo, error) {
+	return s.ListAccessible_(ctx, opt)
 }
 
 func TestRepos_List_GitHubURIs_PublicRepo(t *testing.T) {
@@ -204,10 +204,14 @@ func TestRepos_List_GitHubURIs_PublicRepo(t *testing.T) {
 		t.Skip()
 	}
 
-	repoGetter = &RepoGetterMockPublicRepo{}
-
 	ctx, _, done := testContext()
 	defer done()
+
+	ctx = github.WithRepos(ctx, mockGitHubRepoGetter{
+		Get_: func(context.Context, string) (*sourcegraph.RemoteRepo, error) {
+			return &sourcegraph.RemoteRepo{Private: false}, nil
+		},
+	})
 
 	s := &repos{}
 
@@ -245,10 +249,14 @@ func TestRepos_List_GitHubURIs_PrivateRepo(t *testing.T) {
 		t.Skip()
 	}
 
-	repoGetter = &RepoGetterMockPrivateRepo{}
-
 	ctx, _, done := testContext()
 	defer done()
+
+	ctx = github.WithRepos(ctx, mockGitHubRepoGetter{
+		Get_: func(context.Context, string) (*sourcegraph.RemoteRepo, error) {
+			return &sourcegraph.RemoteRepo{Private: true}, nil
+		},
+	})
 
 	s := &repos{}
 
@@ -271,10 +279,14 @@ func TestRepos_List_GithubURIs_UnauthenticatedRepo(t *testing.T) {
 		t.Skip()
 	}
 
-	repoGetter = &RepoGetterMockUnauthorizedRepo{}
-
 	ctx, _, done := testContext()
 	defer done()
+
+	ctx = github.WithRepos(ctx, mockGitHubRepoGetter{
+		Get_: func(context.Context, string) (*sourcegraph.RemoteRepo, error) {
+			return nil, grpc.Errorf(codes.Unauthenticated, "%s", "github.Repos.Get")
+		},
+	})
 
 	s := &repos{}
 
