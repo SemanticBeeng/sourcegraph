@@ -174,15 +174,15 @@ export class SubmitEmailSubscription {
 	lastName: string;
 	language: string;
 	editor: string;
-	listID: string;
+	message: string;
 
-	constructor(email: string, firstName: string, lastName: string, language: string, editor: string, listID: string) {
+	constructor(email: string, firstName: string, lastName: string, language: string, editor: string, message: string) {
 		this.email = email;
 		this.firstName = firstName;
 		this.lastName = lastName;
 		this.language = language;
 		this.editor = editor;
-		this.listID = listID;
+		this.message = message;
 	}
 }
 

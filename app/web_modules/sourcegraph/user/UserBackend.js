@@ -159,7 +159,6 @@ const UserBackend = {
 			break;
 			// /-/email-subscription
 		case UserActions.SubmitEmailSubscription:
-			console.log("heading into subscription post");
 			trackPromise(
 				UserBackend.fetch(`/.api/email-subscription`, {
 					method: "POST",
@@ -169,11 +168,10 @@ const UserBackend = {
 						merge_fields: {
 							FNAME: action.firstName,
 							LNAME: action.lastName,
-							PLANGUAGE: action.language,
+							LANGUAGE: action.language,
 							EDITOR: action.editor,
-							listID: action.listID,
+							MESSAGE: action.message,
 						},
-
 					}),
 				})
 					.then(checkStatus)
