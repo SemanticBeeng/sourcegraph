@@ -1,8 +1,13 @@
 package cli
 
 import (
+	"bufio"
 	"log"
+	"os"
 	"strings"
+	"sync"
+
+	"github.com/rogpeppe/rog-go/parallel"
 
 	"sourcegraph.com/sourcegraph/sourcegraph/api/sourcegraph"
 	"sourcegraph.com/sourcegraph/sourcegraph/cli/cli"
@@ -20,6 +25,10 @@ func init() {
 }
 
 type searchCmd struct {
+	RefreshList      string `long:"refresh-list" description:"refresh every branch for all repositories in given file list"`
+	RefreshListRate  int    `long:"refresh-list-rate" description:"how many repositories to refresh in parallel" default:"8"`
+	RefreshListStart int    `long:"refresh-list-start" description:"start at the given index instead of repo 0 in the list"`
+
 	Refresh       string `long:"refresh" description:"repository URI for which to update the search index and counts (implies --refresh-counts)"`
 	RefreshCounts string `long:"refresh-counts" description:"repository URI for which to update the search counts"`
 	Limit         int32  `long:"limit" description:"limit # of search results" default:"10"`
@@ -30,7 +39,64 @@ type searchCmd struct {
 
 func (c *searchCmd) Execute(args []string) error {
 	cl := cliClient
-	if c.Refresh != "" {
+	if c.RefreshList != "" {
+		file, err := os.Open(c.RefreshList)
+		if err != nil {
+			return err
+		}
+		defer file.Close()
+
+		var (
+			scanner = bufio.NewScanner(file)
+			run     = parallel.NewRun(c.RefreshListRate)
+
+			indexMu sync.Mutex
+			index   = -1
+		)
+		for scanner.Scan() {
+			indexMu.Lock()
+			index++
+			index := index
+			indexMu.Unlock()
+
+			if index < c.RefreshListStart {
+				continue
+			}
+			repoURI := scanner.Text()
+
+			run.Do(func() error {
+				log.Printf("Refreshing %d: %q\n", index, repoURI)
+				res, err := cl.Repos.Resolve(cliContext, &sourcegraph.RepoResolveOp{Path: repoURI})
+				if err != nil {
+					log.Println(err)
+					return nil
+				}
+				_, err = cl.Defs.RefreshIndex(cliContext, &sourcegraph.DefsRefreshIndexOp{
+					Repo:                res.Repo,
+					RefreshRefLocations: true,
+					Force:               true,
+				})
+				if err != nil {
+					log.Println(err)
+					return nil
+				}
+				_, err = cl.Search.RefreshIndex(cliContext, &sourcegraph.SearchRefreshIndexOp{
+					Repos:         []int32{res.Repo},
+					RefreshCounts: true,
+					RefreshSearch: true,
+				})
+				if err != nil {
+					log.Println(err)
+					return nil
+				}
+				return nil
+			})
+		}
+		if err := scanner.Err(); err != nil {
+			return err
+		}
+		return run.Wait()
+	} else if c.Refresh != "" {
 		log.Printf("Def.RefreshIndex")
 		res, err := cl.Repos.Resolve(cliContext, &sourcegraph.RepoResolveOp{Path: c.Refresh})
 		if err != nil {
