@@ -17,8 +17,8 @@ func TestReposService_Get(t *testing.T) {
 
 	wantRepo := &sourcegraph.Repo{
 		ID:      1,
-		URI:     "r",
-		HTMLURL: "http://example.com/r",
+		URI:     "github.com/u/r",
+		HTMLURL: "http://github.com/u/r",
 		Mirror:  true,
 	}
 
@@ -40,6 +40,41 @@ func TestReposService_Get(t *testing.T) {
 	}
 	if !*calledUpdate {
 		t.Error("!calledUpdate")
+	}
+	if !reflect.DeepEqual(repo, wantRepo) {
+		t.Errorf("got %+v, want %+v", repo, wantRepo)
+	}
+}
+
+func TestReposService_Get_NonGitHub(t *testing.T) {
+	var s repos
+	ctx, mock := testContext()
+
+	wantRepo := &sourcegraph.Repo{
+		ID:      1,
+		URI:     "r",
+		HTMLURL: "http://example.com/r",
+		Mirror:  true,
+	}
+
+	ctx = github.WithRepos(ctx, mockGitHubRepoGetter{
+		Get_: func(context.Context, string) (*sourcegraph.RemoteRepo, error) {
+			return &sourcegraph.RemoteRepo{}, nil
+		},
+	})
+
+	calledGet := mock.stores.Repos.MockGet_Return(t, wantRepo)
+	calledUpdate := mock.stores.Repos.MockUpdate(t, 1)
+
+	repo, err := s.Get(ctx, &sourcegraph.RepoSpec{ID: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !*calledGet {
+		t.Error("!calledGet")
+	}
+	if *calledUpdate {
+		t.Error("calledUpdate")
 	}
 	if !reflect.DeepEqual(repo, wantRepo) {
 		t.Errorf("got %+v, want %+v", repo, wantRepo)

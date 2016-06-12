@@ -83,6 +83,13 @@ func (s *repos) Get(ctx context.Context, repoSpec *sourcegraph.RepoSpec) (*sourc
 	if !repo.Mirror {
 		return repo, nil
 	}
+
+	// Unable to continue if the repository does not have GitHub URI.
+	_, _, err = githubutil.SplitRepoURI(repo.URI)
+	if err != nil {
+		return repo, nil
+	}
+
 	// Sync metadata from GitHub to DB.
 	ghrepo, err := github.ReposFromContext(ctx).Get(ctx, repo.URI)
 	if err != nil {
